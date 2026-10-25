@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Melde en sikkerhetsfeil
+    url: https://github.com/opensourcegeospatial/openmaps/security/policy
+    about: Sårbarheter meldes privat, ikke som issue. Les sikkerhetspolicyen først.

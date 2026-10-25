@@ -1,0 +1,17 @@
+name: Forslag
+description: Foreslå en forbedring eller en ny funksjon
+title: "Forslag: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Takk for forslaget. Prosjektet har begrenset støtte, så svar og endringer kan ta tid. Vil du lage endringen selv, se [CONTRIBUTING.md](https://github.com/opensourcegeospatial/openmaps/blob/main/CONTRIBUTING.md).
+
+  - type: textarea
+    id: forslag
+    attributes:
+      label: "Hva vil du ha, og hvorfor?"
+      description: "Beskriv problemet du vil løse, og hvordan du ser for deg at det virker."
+    validations:
+      required: true

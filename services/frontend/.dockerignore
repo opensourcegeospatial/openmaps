@@ -1,0 +1,48 @@
+# Node / package managers
+node_modules
+.pnpm-store
+npm-debug.log
+yarn-error.log
+.pnpm-debug.log
+.pnpmfile.cjs
+
+# Build outputs
+.svelte-kit
+build
+dist
+*.tsbuildinfo
+
+# Environment & config
+.env
+.env.*
+!.env.example
+
+# IDE / editor files
+.vscode
+.idea
+*.swp
+*.swo
+*.swn
+*.swm
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Tests
+e2e
+playwright.config.ts
+vitest-setup-client.ts
+playwright-report
+
+# Documentation
+README.md
+
+# Docker
+Dockerfile*
+.dockerignore

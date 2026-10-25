@@ -1,0 +1,198 @@
+# Judges every pull request and every push to main. The job ids (backend, frontend, lint,
+# compose, images) are the required status checks in the branch protection rules; renaming
+# one means updating the rules too.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# A new push to a pull request replaces the run still going for the old commit.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: services/backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            services/backend/requirements.txt
+            services/backend/requirements-dev.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Ruff
+        run: ruff check .
+
+      - name: Tests
+        run: python -m pytest
+
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: services/frontend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Gives the pnpm version pinned by "packageManager" in package.json.
+      - name: Enable pnpm
+        run: corepack enable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: ESLint
+        run: pnpm lint
+
+      - name: Type check
+        run: pnpm exec tsc --noEmit
+
+      - name: Unit tests
+        run: pnpm exec vitest run
+
+      - name: Build
+        run: pnpm build
+
+      # The build writes the list of bundled packages and their licences. Fail if a
+      # package or the font that has to be named in it has dropped out.
+      - name: Check the licence list
+        run: |
+          notices=dist/third-party-notices.txt
+          if [[ ! -s $notices ]]; then
+            echo "::error::$notices is missing or empty"
+            exit 1
+          fi
+          failed=0
+          for line in 'Name: leaflet' 'Name: react' 'Name: @mattilsynet/design' 'License: BSD-2-Clause'; do
+            if ! grep -qxF -- "$line" "$notices"; then
+              echo "::error::$notices has no line '$line'"
+              failed=1
+            fi
+          done
+          for text in 'SIL Open Font License' 'Jacob Toye'; do
+            if ! grep -qF -- "$text" "$notices"; then
+              echo "::error::$notices does not contain '$text'"
+              failed=1
+            fi
+          done
+          exit "$failed"
+
+      - name: Install the Playwright browser
+        run: pnpm exec playwright install --with-deps chromium
+
+      # CI=1 makes Playwright start its own dev server instead of reusing one.
+      - name: End-to-end tests
+        run: CI=1 pnpm test:e2e
+
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install shellcheck
+        run: |
+          if ! command -v shellcheck >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y shellcheck
+          fi
+          shellcheck --version
+
+      # Every shell script in the repository; the job fails if there are none, because
+      # docker-entrypoint.sh must always be among them.
+      - name: shellcheck
+        run: |
+          git ls-files '*.sh'
+          if [[ -z $(git ls-files '*.sh') ]]; then
+            echo "::error::no shell scripts found"
+            exit 1
+          fi
+          git ls-files -z '*.sh' | xargs -0 shellcheck
+
+      # failure-threshold is set here as well, because the action's own default
+      # (info) would otherwise win over the one in .hadolint.yaml.
+      - name: hadolint (frontend)
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: services/frontend/Dockerfile
+          config: .hadolint.yaml
+          failure-threshold: error
+
+      - name: hadolint (backend)
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: services/backend/Dockerfile
+          config: .hadolint.yaml
+          failure-threshold: error
+
+  compose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Compose version
+        run: docker compose version
+
+      # Without a .env, Compose has to stop and name the missing variable.
+      - name: Compose refuses to start without .env
+        run: |
+          if out=$(docker compose config -q 2>&1); then
+            echo "::error::docker compose config accepted a missing .env"
+            exit 1
+          fi
+          printf '%s\n' "$out"
+          if ! grep -Eq 'Sett (GEOCODE_URL|REVERSE_GEOCODE_URL|GRAPHHOPPER_URL|OVERPASS_API) i \.env' <<<"$out"; then
+            echo "::error::the message does not name a missing variable"
+            exit 1
+          fi
+
+      - name: Compose accepts .env.example
+        run: cp .env.example .env && docker compose config -q
+
+  images:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Built, not pushed or loaded: the point is that the Dockerfiles still build.
+      - name: Build the frontend image
+        run: docker buildx build --platform linux/amd64 --output type=cacheonly services/frontend
+
+      - name: Build the backend image (slim, without the local model)
+        run: docker buildx build --platform linux/amd64 --build-arg WITH_ML=false --output type=cacheonly services/backend

@@ -1,0 +1,170 @@
+###############################################################################
+# OpenMaps: the web frontend and the API backend.
+#
+#   cp .env.example .env      # then fill in the service URLs (see the file)
+#   docker compose up -d
+#
+# Compose interpolates .env into this file but does not pass it on to the
+# containers, so every variable the services read is listed below. The four
+# service URLs have no default: without them Compose stops before it starts
+# anything.
+###############################################################################
+
+name: openmaps
+
+# Cap the container logs so a long-running host does not fill its disk.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "5"
+
+services:
+  # Backend: FastAPI. Proxies search, routing and Overpass queries to the
+  # services in .env, and serves street view panoramas and /health.
+  backend:
+    image: ghcr.io/opensourcegeospatial/openmaps-backend:${OPENMAPS_VERSION:-latest}
+    build:
+      context: ./services/backend
+      args:
+        # true builds the image with torch/transformers for the local model
+        # (much larger); false is the slim image.
+        WITH_ML: "${BACKEND_WITH_ML:-false}"
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    volumes:
+      # Read-write: the backend writes panoramas.json here when it finds
+      # panoramas with metadata and the index is missing or stale.
+      - ${STREETVIEW_HOST_DIR:-./streetview}:/app/streetview
+      # Optional local model for natural-language search (needs
+      # BACKEND_WITH_ML=true and the model files under ./models):
+      # - ./models:/app/models:ro
+    environment:
+      # --- Upstream services (required, no default) ---
+      GEOCODE_URL: "${GEOCODE_URL:?Sett GEOCODE_URL i .env – kopier .env.example først}"
+      REVERSE_GEOCODE_URL: "${REVERSE_GEOCODE_URL:?Sett REVERSE_GEOCODE_URL i .env – kopier .env.example først}"
+      GRAPHHOPPER_URL: "${GRAPHHOPPER_URL:?Sett GRAPHHOPPER_URL i .env – kopier .env.example først}"
+      OVERPASS_API: "${OVERPASS_API:?Sett OVERPASS_API i .env – kopier .env.example først}"
+      # Key for the hosted GraphHopper Directions API (sent as its "key" query
+      # parameter, never logged or shown). Empty for a self-hosted GraphHopper.
+      GRAPHHOPPER_API_KEY: "${GRAPHHOPPER_API_KEY:-}"
+      # Only probed by /health when "tileserver" is not in HEALTH_SKIP.
+      TILESERVER_URL: "${TILESERVER_URL:-http://tileserver:8080}"
+      # User-Agent on every upstream request. The public OSM services reject
+      # stock library agents and ask for a contact address.
+      HTTP_USER_AGENT: "${HTTP_USER_AGENT:-}"
+      NOMINATIM_LANGUAGE: "${NOMINATIM_LANGUAGE:-nb,nn,no,en}"
+      # --- /health ---
+      # Probes to leave out (comma list). The defaults are the tool UIs and the
+      # tile service, which this stack does not run.
+      HEALTH_SKIP: "${HEALTH_SKIP:-tileserver,nominatim-ui,overpassbot,overpass-ultra,graphhopper-maps}"
+      HEALTH_CHECK_TIMEOUT: "${HEALTH_CHECK_TIMEOUT:-5}"
+      HEALTH_CACHE_SECONDS: "${HEALTH_CACHE_SECONDS:-5}"
+      # --- Logging and limits ---
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+      LOG_FORMAT: "${LOG_FORMAT:-json}"
+      ROUTING_MAX_ALTERNATIVES: "${ROUTING_MAX_ALTERNATIVES:-3}"
+      MAX_ROUTE_WAYPOINTS: "${MAX_ROUTE_WAYPOINTS:-25}"
+      OVERPASS_MAX_BBOX_AREA: "${OVERPASS_MAX_BBOX_AREA:-4}"
+      OVERPASS_MAXSIZE_BYTES: "${OVERPASS_MAXSIZE_BYTES:-33554432}"
+      OVERPASS_MAX_CONCURRENT_INFERENCES: "${OVERPASS_MAX_CONCURRENT_INFERENCES:-1}"
+      OVERPASS_MAX_GENERATION_SECONDS: "${OVERPASS_MAX_GENERATION_SECONDS:-30}"
+      # --- Natural-language Overpass search ---
+      # auto: the LLM when all three LLM_* are set, else the local model when it
+      # loads, else keyword search. The key is a bearer token, never logged.
+      OVERPASS_GENERATOR: "${OVERPASS_GENERATOR:-auto}"
+      LLM_BASE_URL: "${LLM_BASE_URL:-}"
+      LLM_MODEL: "${LLM_MODEL:-}"
+      LLM_API_KEY: "${LLM_API_KEY:-}"
+      LLM_TIMEOUT_SECONDS: "${LLM_TIMEOUT_SECONDS:-30}"
+      LLM_MAX_TOKENS: "${LLM_MAX_TOKENS:-200}"
+      LLM_MAX_CONCURRENT: "${LLM_MAX_CONCURRENT:-4}"
+      # --- Local model (BACKEND_WITH_ML=true) ---
+      MODEL_DIR: "${MODEL_DIR:-/app/models/byt5-base_com08}"
+      # Empty = one thread per CPU the container may use.
+      TORCH_NUM_THREADS: "${TORCH_NUM_THREADS:-}"
+      # --- Street view ---
+      STREETVIEW_DIR: "/app/streetview"
+      STREETVIEW_INDEX_ON_START: "${STREETVIEW_INDEX_ON_START:-true}"
+    healthcheck:
+      # /config answers as soon as the API is up; /health asks the upstream
+      # services and would tie the container's health to theirs.
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/config"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      # The local model loads in the background and can take a while.
+      start_period: 180s
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    logging: *default-logging
+
+  # Frontend: the map application (nginx). Sends /api/* to the backend.
+  frontend:
+    image: ghcr.io/opensourcegeospatial/openmaps-frontend:${OPENMAPS_VERSION:-latest}
+    build: ./services/frontend
+    ports:
+      - "${FRONTEND_PORT:-8080}:3000"
+    environment:
+      # --- Map ---
+      MAP_DEFAULT_ZOOM: "${MAP_DEFAULT_ZOOM:-12}"
+      MAP_DEFAULT_LNG: "${MAP_DEFAULT_LNG:-10.7446}"
+      MAP_DEFAULT_LAT: "${MAP_DEFAULT_LAT:-59.9127}"
+      # JSON array of base layers: {id, name, url, attribution?}, url with
+      # {z}/{x}/{y} (and {s}). The default is the OpenStreetMap raster tiles.
+      MAP_STYLES: '${MAP_STYLES:-[{"id":"osm","name":"OpenStreetMap","url":"https://tile.openstreetmap.org/{z}/{x}/{y}.png","attribution":"© <a href=\"https://www.openstreetmap.org/copyright\">OpenStreetMap</a>-bidragsytere"}]}'
+      # --- API endpoints (relative: the frontend's own nginx proxies /api/*) ---
+      API_GRAPHHOPPER_URL: "${API_GRAPHHOPPER_URL:-/api/route}"
+      API_NOMINATIM_SEARCH_URL: "${API_NOMINATIM_SEARCH_URL:-/api/search}"
+      API_NOMINATIM_REVERSE_URL: "${API_NOMINATIM_REVERSE_URL:-/api/reverse}"
+      API_OVERPASS_URL: "${API_OVERPASS_URL:-/api/overpass}"
+      # --- UI toggles ---
+      HEALTH_DASHBOARD_ENABLED: "${HEALTH_DASHBOARD_ENABLED:-}"
+      # --- Street view (off until there are panoramas to show) ---
+      STREETVIEW_ENABLED: "${STREETVIEW_ENABLED:-false}"
+      STREETVIEW_TILES_URL: "${STREETVIEW_TILES_URL:-}"
+      STREETVIEW_GEOJSON_URL: "${STREETVIEW_GEOJSON_URL:-/api/streetview/panoramas}"
+      STREETVIEW_PANORAMA_URL: "${STREETVIEW_PANORAMA_URL:-/api/streetview/panorama/{id}}"
+      STREETVIEW_METADATA_URL: "${STREETVIEW_METADATA_URL:-}"
+      STREETVIEW_SOURCE_LAYER: "${STREETVIEW_SOURCE_LAYER:-}"
+      STREETVIEW_MIN_ZOOM: "${STREETVIEW_MIN_ZOOM:-}"
+      STREETVIEW_MAX_ZOOM: "${STREETVIEW_MAX_ZOOM:-}"
+      STREETVIEW_CIRCLE_COLOR: "${STREETVIEW_CIRCLE_COLOR:-}"
+      STREETVIEW_CIRCLE_RADIUS: "${STREETVIEW_CIRCLE_RADIUS:-}"
+      STREETVIEW_CIRCLE_STROKE_COLOR: "${STREETVIEW_CIRCLE_STROKE_COLOR:-}"
+      STREETVIEW_CIRCLE_STROKE_WIDTH: "${STREETVIEW_CIRCLE_STROKE_WIDTH:-}"
+      STREETVIEW_CIRCLE_OPACITY: "${STREETVIEW_CIRCLE_OPACITY:-}"
+      STREETVIEW_BOUNDS: "${STREETVIEW_BOUNDS:-}"
+      # --- Theme colours (6-digit hex; empty = the built-in palette) ---
+      THEME_PRIMARY: "${THEME_PRIMARY:-}"
+      THEME_NEUTRAL: "${THEME_NEUTRAL:-}"
+      THEME_SURFACE: "${THEME_SURFACE:-}"
+      THEME_BACKGROUND: "${THEME_BACKGROUND:-}"
+      THEME_TEXT: "${THEME_TEXT:-}"
+      THEME_BORDER: "${THEME_BORDER:-}"
+      THEME_SUCCESS: "${THEME_SUCCESS:-}"
+      THEME_DANGER: "${THEME_DANGER:-}"
+      THEME_WARNING: "${THEME_WARNING:-}"
+      THEME_ROUTE_PRIMARY: "${THEME_ROUTE_PRIMARY:-}"
+      THEME_ROUTE_ALTERNATIVE: "${THEME_ROUTE_ALTERNATIVE:-}"
+      THEME_MARKER_FROM: "${THEME_MARKER_FROM:-}"
+      THEME_MARKER_TO: "${THEME_MARKER_TO:-}"
+      THEME_MARKER_WAYPOINT: "${THEME_MARKER_WAYPOINT:-}"
+      THEME_AVOID: "${THEME_AVOID:-}"
+      THEME_FEATURE_SELECTED: "${THEME_FEATURE_SELECTED:-}"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:3000/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+    logging: *default-logging
+    depends_on:
+      backend:
+        condition: service_healthy

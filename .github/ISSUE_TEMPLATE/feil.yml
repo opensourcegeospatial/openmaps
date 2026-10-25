@@ -1,0 +1,51 @@
+name: Feil
+description: Noe virker ikke som det skal
+title: "Feil: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Takk for at du melder fra. Prosjektet har begrenset støtte, så svaret kan ta litt tid.
+
+        Sikkerhetsfeil skal **ikke** meldes her, for et issue kan alle lese. Se [sikkerhetspolicyen](https://github.com/opensourcegeospatial/openmaps/security/policy).
+
+  - type: input
+    id: versjon
+    attributes:
+      label: "Versjon"
+      description: "Versjonen av OpenMaps du bruker, for eksempel 1.0.0. Bygger du selv, oppgi commit-id-en."
+    validations:
+      required: true
+
+  - type: textarea
+    id: beskrivelse
+    attributes:
+      label: "Hva skjedde, og hva forventet du?"
+      description: "Skriv hva du gjorde, hva som skjedde, og hva du forventet. Legg gjerne ved et skjermbilde."
+    validations:
+      required: true
+
+  - type: dropdown
+    id: oppsett
+    attributes:
+      label: "Oppsett"
+      description: "Hvilke karttjenester bruker du?"
+      options:
+        - Offentlige tjenester
+        - Egne tjenester
+        - Blandet
+
+  - type: textarea
+    id: innstillinger
+    attributes:
+      label: "Relevante innstillinger fra .env (uten nøkler eller passord)"
+      description: "Lim inn bare linjene som har med feilen å gjøre. Fjern verdier som GRAPHHOPPER_API_KEY og LLM_API_KEY."
+      render: shell
+
+  - type: textarea
+    id: logger
+    attributes:
+      label: "Logger"
+      description: "Kjør `docker compose logs backend frontend` og lim inn det som er relevant."
+      render: shell

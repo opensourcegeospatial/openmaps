@@ -1,0 +1,45 @@
+# Backend service .dockerignore
+# Only copy what the Dockerfile explicitly needs
+
+# Version control
+.git
+.gitignore
+
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+.venv/
+venv/
+env/
+pip-log.txt
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# IDE and OS files
+.idea/
+.vscode/
+*.swp
+*.swo
+*.swn
+.DS_Store
+
+# Docker files (don't copy into the image)
+Dockerfile*
+.dockerignore
+docker-compose*.yml
+
+# Documentation
+README.md
+*.md
+
+# Tests
+tests/
+test_*.py
+
+# Build artifacts
+dist/
+build/

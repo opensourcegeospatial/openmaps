@@ -1,0 +1,11 @@
+# /overpass natural-language search via the bundled byt5 model. Installed only
+# when the image is built with WITH_ML=true (the default). The slim image for
+# thin deployments (WITH_ML=false) leaves these out: it uses the network's LLM
+# (OVERPASS_GENERATOR=llm) or keyword search instead.
+transformers>=4.36.0
+# The runtime has no GPU, so install the CPU-only build from the PyTorch index
+# (the Dockerfile passes --extra-index-url https://download.pytorch.org/whl/cpu).
+# The default PyPI wheel for linux/x86_64 is the CUDA build and drags in ~5 GB of
+# nvidia-* packages that would never be used. When installing from a package
+# mirror, mirror this wheel too.
+torch==2.14.0+cpu

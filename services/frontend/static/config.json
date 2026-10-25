@@ -1,0 +1,67 @@
+{
+  "defaultZoom": 12,
+  "defaultCenter": { "lng": 10.7446, "lat": 59.9127 },
+  "styles": [
+    {
+      "id": "osm",
+      "name": "OpenStreetMap",
+      "url": "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+      "attribution": "© <a href=\"https://www.openstreetmap.org/copyright\">OpenStreetMap</a>-bidragsytere"
+    },
+    {
+      "id": "local",
+      "name": "Lokale kartfliser",
+      "url": "/tiles/{z}/{x}/{y}.png",
+      "attribution": "© OpenStreetMap-bidragsytere"
+    },
+    {
+      "id": "satellite",
+      "name": "Satellitt",
+      "url": "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+      "attribution": "Kilde: Esri, Maxar, Earthstar Geographics og GIS-brukerfellesskapet"
+    },
+    {
+      "id": "topo",
+      "name": "Topografisk",
+      "url": "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
+      "attribution": "Kartdata: © OpenStreetMap-bidragsytere, SRTM · Kartvisning: © OpenTopoMap (CC-BY-SA)"
+    },
+    {
+      "id": "stamen-terrain",
+      "name": "Terreng",
+      "url": "https://tiles.stadiamaps.com/tiles/stamen_terrain/{z}/{x}/{y}.png",
+      "attribution": "© Stadia Maps © Stamen Design © OpenMapTiles © OpenStreetMap-bidragsytere"
+    },
+    {
+      "id": "cartodb-light",
+      "name": "Lys",
+      "url": "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
+      "attribution": "© OpenStreetMap-bidragsytere © CARTO"
+    },
+    {
+      "id": "cartodb-dark",
+      "name": "Mørk",
+      "url": "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
+      "attribution": "© OpenStreetMap-bidragsytere © CARTO"
+    }
+  ],
+  "apiEndpoints": {
+    "graphhopper": "/api/route",
+    "nominatim": {
+      "search": "/api/search",
+      "reverse": "/api/reverse"
+    },
+    "overpass": "/api/overpass"
+  },
+  "streetview": {
+    "enabled": true,
+    "geoJsonUrl": "/api/streetview/panoramas",
+    "panoramaUrl": "/api/streetview/panorama/{id}",
+    "minZoom": 12,
+    "maxZoom": 18,
+    "circleRadius": 6,
+    "circleStrokeWidth": 2,
+    "circleOpacity": 0.85,
+    "bounds": [7.41, 43.724, 7.434, 43.745]
+  }
+}

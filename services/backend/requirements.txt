@@ -1,0 +1,11 @@
+fastapi==0.115.6
+uvicorn[standard]==0.30.6
+httpx==0.27.2
+polyline==2.0.2
+# The byt5 model stack (transformers, torch) lives in requirements-ml.txt and is
+# installed only for WITH_ML=true builds.
+# Observability: Prometheus /metrics endpoint. When installing from a package
+# mirror, both wheels (and their dep starlette, already pulled in by fastapi)
+# must be mirrored before building the backend image.
+prometheus-fastapi-instrumentator==7.0.0
+prometheus-client==0.21.1

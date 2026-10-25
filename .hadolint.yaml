@@ -1,0 +1,15 @@
+# hadolint rules for OpenMaps CI (the lint job in .github/workflows/ci.yml).
+# Kept light: a few noisy "pin exact versions" rules are demoted to warnings, so
+# hadolint flags real problems without drowning the output. Real errors (bad
+# syntax, root-only mistakes, etc.) still fail the check.
+failure-threshold: error
+
+override:
+  warning:
+    - DL3008  # Pin versions in apt-get install
+    - DL3013  # Pin versions in pip install
+    - DL3018  # Pin versions in apk add
+    - DL3059  # Multiple consecutive RUN instructions
+
+ignored:
+  - DL3007  # Using latest tag — some upstream base images only ship :latest
