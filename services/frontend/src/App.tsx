@@ -41,6 +41,7 @@ import { usePlaces } from './hooks/usePlaces';
 import { MAX_SAVED_PLACES, toStoredPlace } from './lib/places';
 import type { StopFocusRequest } from './components/NavigationPanel';
 import { getPlaceTitle } from './lib/featureDetails';
+import { isCoordinateFeature } from './lib/coordinates';
 import { formatLatLng } from './lib/format';
 import { copyText } from './lib/clipboard';
 import { statusForResult, type RoutingStatus, routeFailureMessage, type RoutingProfile } from './lib/routingStatus';
@@ -504,7 +505,7 @@ const App: React.FC = () => {
   // turned into an address (the feature then holds only the coordinates).
   const [selectedFeatureNote, setSelectedFeatureNote] = useState<string | null>(null);
   // The point a failed "Hva er her?" asked about, so its card can ask again.
-  const [featureRetryAt, setFeatureRetryAt] = useState<MapLngLat | null>(null);
+  const [featureRetryAt, setFeatureRetryAt] = useState<(MapLngLat & { exact?: boolean }) | null>(null);
   // The travel mode of the route now drawn; after a failed recalculation it is
   // no longer the pressed one, and the panel says which route it is showing.
   const [routeProfile, setRouteProfile] = useState<RoutingProfile | null>(null);
@@ -545,7 +546,15 @@ const App: React.FC = () => {
       // the hits and then checking one of them against an address is the whole
       // loop. This was the last path that threw the answer away, and it did it
       // silently — no toast, no Angre, nothing said (critique run 15).
-      handleSelect(feature);
+      if (isCoordinateFeature(feature)) {
+        // A position is its own answer: the map goes there, and the lookup that
+        // a click would make names the nearest address without moving the pin.
+        const [lng, lat] = feature.geometry.coordinates;
+        mapRef.current?.jumpToFeature(feature);
+        mapRef.current?.lookupAt({ lng, lat }, { exact: true });
+      } else {
+        handleSelect(feature);
+      }
       addRecent(feature);
     },
     [handleSelect, addRecent]
@@ -557,14 +566,14 @@ const App: React.FC = () => {
   // 2026-09-14). While a route is being planned the card opens above the route
   // panel and the route is not touched.
   const handleMapSelect = useCallback(
-    (feature: GeoJSONFeature, note?: string, options?: { focus?: boolean; retry?: boolean }) => {
+    (feature: GeoJSONFeature, note?: string, options?: { focus?: boolean; retry?: boolean; exact?: boolean }) => {
       handleSelect(feature, note, { jump: false, focus: options?.focus });
       // A failed lookup keeps its point, so the card can ask the same question
       // again instead of sending the user back to the same pixel.
       const geometry = options?.retry ? feature.geometry : null;
       if (geometry && geometry.type === 'Point') {
         const [lng, lat] = geometry.coordinates as [number, number];
-        setFeatureRetryAt({ lng, lat });
+        setFeatureRetryAt({ lng, lat, exact: options?.exact });
       }
     },
     [handleSelect]
@@ -1352,7 +1361,9 @@ const App: React.FC = () => {
         focusOnOpen={selectedFeatureFocus}
         feature={selectedFeature}
         featureNote={selectedFeatureNote}
-        onRetryFeature={featureRetryAt ? () => mapRef.current?.lookupAt(featureRetryAt) : undefined}
+        onRetryFeature={
+          featureRetryAt ? () => mapRef.current?.lookupAt(featureRetryAt, { exact: featureRetryAt.exact }) : undefined
+        }
         routeProfile={routeProfile}
         routeFeature={routeFeature}
         routes={routeResponse?.routes ?? null}

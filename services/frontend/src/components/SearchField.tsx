@@ -10,9 +10,12 @@ import { translatePlaceType } from '../lib/placeTypes';
 import UndoNotice from './UndoNotice';
 import { getPlaceTitle } from '../lib/featureDetails';
 import { useRestingLabel } from '../hooks/useRestingLabel';
+import { parseCoordinates, readingToFeature } from '../lib/coordinates';
 
 /** A place row's two lines: the name, then "type · locality". */
 const rowText = (feature: GeoJSONFeature, category?: string) => {
+  const reading = feature.properties?.coordinate_reading;
+  if (reading) return { label: feature.properties?.display_name as string, meta: reading as string };
   const { title, locality } = getPlaceTitle(feature);
   const type = translatePlaceType(category ?? feature.properties?.type);
   return { label: title, meta: [type, locality].filter(Boolean).join(' · ') || undefined };
@@ -20,6 +23,8 @@ const rowText = (feature: GeoJSONFeature, category?: string) => {
 
 /** The one error that is not the service's fault, so it offers no retry. */
 const EMPTY_QUERY_MESSAGE = 'Skriv hva du leter etter først.';
+
+const COORDINATES_HINT = 'Skriv eller lim inn: desimalgrader, grader og minutter, UTM eller MGRS.';
 
 interface SearchFieldProps {
   value: string;
@@ -82,6 +87,8 @@ interface PlaceOptionProps {
   label: string;
   meta?: string;
   ariaLabel?: string;
+  /** The label is a coordinate, so its figures line up with the rows around it. */
+  steadyFigures?: boolean;
   onPick: () => void;
   onEnter?: () => void;
   onLeave?: () => void;
@@ -99,6 +106,7 @@ const PlaceOption: React.FC<PlaceOptionProps> = ({
   label,
   meta,
   ariaLabel,
+  steadyFigures = false,
   onPick,
   onEnter,
   onLeave
@@ -123,7 +131,7 @@ const PlaceOption: React.FC<PlaceOptionProps> = ({
   >
     {icon === 'star' ? <StarIcon /> : icon === 'clock' ? <ClockIcon /> : <PinIcon />}
     <div className="min-w-0">
-      <p className="truncate text-sm text-text-default">{label}</p>
+      <p className={`truncate text-sm text-text-default ${steadyFigures ? 'tabular-nums' : ''}`}>{label}</p>
       {meta && <p className="truncate text-xs text-text-subtle">{meta}</p>}
     </div>
   </button>
@@ -171,6 +179,11 @@ const SearchField: React.FC<SearchFieldProps> = (props: SearchFieldProps) => {
   // The place last picked into the field: its long name, and the short name
   // the field reads by at rest while that long name is still its text.
   const [picked, setPicked] = useState<{ name: string; label: string } | null>(null);
+  // The coordinates someone has finished with, by pasting them or pressing
+  // Enter. Only those are told what is wrong: half a coordinate on its way to
+  // being a whole one is not a mistake yet.
+  const [settledCoordinates, setSettledCoordinates] = useState<string | null>(null);
+  const justPasted = useRef(false);
   const localInputRef = useRef<HTMLInputElement>(null);
   const fieldRef = inputRef ?? localInputRef;
   const resting = useRestingLabel(value, picked && value === picked.name ? picked.label : undefined, fieldRef);
@@ -194,6 +207,10 @@ const SearchField: React.FC<SearchFieldProps> = (props: SearchFieldProps) => {
 
   useEffect(() => {
     if (mode !== 'nominatim') {
+      if (mode === 'coordinates') {
+        cancelOverpassSearch();
+        setLoading(false);
+      }
       setResults([]);
       setError(null);
       // A new query (or a mode switch) withdraws the "no hits" verdict.
@@ -251,6 +268,13 @@ const SearchField: React.FC<SearchFieldProps> = (props: SearchFieldProps) => {
   }, [mode, trimmedValue, mapRef, retryToken]);
 
   const handleSelect = (feature: GeoJSONFeature) => {
+    if (mode === 'coordinates') {
+      // The field keeps what was pasted: the card shows decimal degrees, and
+      // this is where a UTM or MGRS value can still be read as it was given.
+      setFocused(false);
+      onSelect(feature);
+      return;
+    }
     suppressNextSearch.current = true;
     setResults([]);
     setSearched(false);
@@ -390,19 +414,28 @@ const SearchField: React.FC<SearchFieldProps> = (props: SearchFieldProps) => {
     trimmedValue === '' &&
     (savedPlaces.length > 0 || recentPlaces.length > 0);
 
+  const coordinates = useMemo(() => (mode === 'coordinates' ? parseCoordinates(value) : null), [mode, value]);
+  const readings = useMemo(() => coordinates?.readings.map(readingToFeature) ?? [], [coordinates]);
+  // Readings follow the text and focus rather than being fetched, so they are
+  // still there to choose another from after one has been picked.
+  const listed = useMemo(
+    () => (mode !== 'coordinates' ? results : focused ? readings : []),
+    [mode, results, focused, readings]
+  );
+
   // One keyboard model for picking a place, shared with the route fields: the
   // input is a combobox, and everything listed under it (the places found, or
   // the saved and recent places) is one listbox of options. The arrow keys
   // move the highlight, Enter picks, Escape closes, and Tab leaves the field
   // instead of walking every row.
   const storedOptions = showPlaces ? [...savedPlaces, ...recentPlaces] : [];
-  const optionCount = results.length > 0 ? results.length : storedOptions.length;
+  const optionCount = listed.length > 0 ? listed.length : storedOptions.length;
   const listOpen = optionCount > 0;
   const optionId = (index: number) => `${listboxId}-option-${index}`;
 
   useEffect(() => {
     setActiveIndex(-1);
-  }, [results, showPlaces]);
+  }, [listed, showPlaces]);
 
   useEffect(() => {
     if (activeIndex < 0) return;
@@ -410,8 +443,8 @@ const SearchField: React.FC<SearchFieldProps> = (props: SearchFieldProps) => {
   }, [activeIndex, listboxId]);
 
   const pickOption = (index: number) => {
-    if (results.length > 0) {
-      if (results[index]) handleSelect(results[index]);
+    if (listed.length > 0) {
+      if (listed[index]) handleSelect(listed[index]);
       return;
     }
     if (storedOptions[index]) handlePickPlace(storedOptions[index]);
@@ -432,6 +465,13 @@ const SearchField: React.FC<SearchFieldProps> = (props: SearchFieldProps) => {
         e.preventDefault();
         void handleOverpassSearch();
       }
+      return;
+    }
+    if (mode === 'coordinates' && e.key === 'Enter') {
+      e.preventDefault();
+      const reading = listOpen && activeIndex >= 0 ? listed[activeIndex] : readings[0];
+      if (reading) handleSelect(reading);
+      else setSettledCoordinates(value);
       return;
     }
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -457,10 +497,18 @@ const SearchField: React.FC<SearchFieldProps> = (props: SearchFieldProps) => {
     }
   };
 
+  const coordinatesProblem = settledCoordinates === value ? coordinates?.problem : null;
+  // What the line under the coordinates field says on screen, if anything.
+  const coordinatesLine = coordinatesProblem ?? (readings.length === 0 ? COORDINATES_HINT : null);
+
   return (
     <div ref={wrapperRef} className="relative" onFocus={handleFocusWithin} onBlur={handleBlurWithin}>
       <label htmlFor={inputId} className="sr-only">
-        {mode === 'overpass' ? 'Hva finnes i kartutsnittet?' : 'Søk etter sted eller adresse'}
+        {mode === 'overpass'
+          ? 'Hva finnes i kartutsnittet?'
+          : mode === 'coordinates'
+            ? 'Koordinater'
+            : 'Søk etter sted eller adresse'}
       </label>
       <div className="flex items-center">
         {leading}
@@ -473,9 +521,17 @@ const SearchField: React.FC<SearchFieldProps> = (props: SearchFieldProps) => {
           type="search"
           {...resting.inputProps}
           placeholder={placeholder}
-          onChange={(event: React.ChangeEvent<HTMLInputElement>) =>
-            onChange(event.target.value)
-          }
+          onChange={(event: React.ChangeEvent<HTMLInputElement>) => {
+            onChange(event.target.value);
+            if (mode === 'coordinates') {
+              setFocused(true);
+              if (justPasted.current) setSettledCoordinates(event.target.value);
+              justPasted.current = false;
+            }
+          }}
+          onPaste={() => {
+            justPasted.current = mode === 'coordinates';
+          }}
           onFocus={() => {
             resting.onFocus();
             setError(null);
@@ -487,7 +543,9 @@ const SearchField: React.FC<SearchFieldProps> = (props: SearchFieldProps) => {
           aria-controls={listOpen ? listboxId : undefined}
           aria-activedescendant={listOpen && activeIndex >= 0 ? optionId(activeIndex) : undefined}
           aria-autocomplete="list"
-          className="h-12 w-full text-ellipsis bg-transparent px-4 text-base text-text-default placeholder-text-subtle outline-none"
+          className={`h-12 w-full text-ellipsis bg-transparent px-4 text-base text-text-default placeholder-text-subtle outline-none ${
+            mode === 'coordinates' ? 'tabular-nums' : ''
+          }`}
         />
         {resting.resting && (
           <span id={resting.descriptionId} className="sr-only">
@@ -601,6 +659,26 @@ const SearchField: React.FC<SearchFieldProps> = (props: SearchFieldProps) => {
         </p>
       )}
 
+      {/* One region for everything this mode says, mounted with the mode, so
+          what arrives in it is read where it stands. */}
+      {mode === 'coordinates' && (
+        <p
+          role="status"
+          className={
+            coordinatesLine
+              ? `border-t border-border-subtle px-4 py-2 text-text-subtle ${coordinatesProblem ? 'text-sm' : 'text-xs'}`
+              : 'sr-only'
+          }
+        >
+          {coordinatesLine ??
+            (listed.length === 1
+              ? `Lest som ${listed[0].properties?.display_name}, ${listed[0].properties?.coordinate_reading}`
+              : listed.length > 1
+                ? `${listed.length} mulige plasseringer`
+                : '')}
+        </p>
+      )}
+
       {mode === 'nominatim' && showMapHint && !error && !listOpen && !trimmedValue && (
         // The permanent teaching on the default screen: PRODUCT.md left
         // first-visit guidance open, and someone who opens this map twice a
@@ -634,11 +712,17 @@ const SearchField: React.FC<SearchFieldProps> = (props: SearchFieldProps) => {
         <div
           id={listboxId}
           role="listbox"
-          aria-label={results.length > 0 ? 'Steder funnet' : 'Mine steder og nylige søk'}
-          className={`border-t border-border-default ${results.length > 0 ? '' : 'max-h-[60vh] overflow-y-auto'}`}
+          aria-label={
+            mode === 'coordinates'
+              ? 'Slik kan koordinatene leses'
+              : listed.length > 0
+                ? 'Steder funnet'
+                : 'Mine steder og nylige søk'
+          }
+          className={`border-t border-border-default ${listed.length > 0 ? '' : 'max-h-[60vh] overflow-y-auto'}`}
         >
-          {results.length > 0 ? (
-            results.map((feature: GeoJSONFeature, index: number) => {
+          {listed.length > 0 ? (
+            listed.map((feature: GeoJSONFeature, index: number) => {
               const osmId = feature.properties?.osm_id ?? feature.id ?? feature.properties?.place_id;
               return (
                 <PlaceOption
@@ -647,8 +731,12 @@ const SearchField: React.FC<SearchFieldProps> = (props: SearchFieldProps) => {
                   active={index === activeIndex}
                   icon="pin"
                   {...rowText(feature)}
+                  steadyFigures={mode === 'coordinates'}
                   // The full address stays the accessible name: the two lines are its short form.
-                  ariaLabel={[feature.properties?.display_name, translatePlaceType(feature.properties?.type)]
+                  ariaLabel={[
+                    feature.properties?.display_name,
+                    feature.properties?.coordinate_reading ?? translatePlaceType(feature.properties?.type)
+                  ]
                     .filter(Boolean)
                     .join(', ')}
                   onPick={() => handleSelect(feature)}

@@ -8,6 +8,7 @@ import 'leaflet-draw/dist/leaflet.draw.css';
 import type { Feature, FeatureCollection, Geometry, GeoJsonObject } from 'geojson';
 import type { GeoJSONFeature } from '../lib/nominatim';
 import { ReverseGeocode } from '../lib/nominatim';
+import { getPlaceTitle } from '../lib/featureDetails';
 import { OSM_CREDIT, plainAttribution } from '../lib/attribution';
 import { resolveFeatureView } from '../lib/featureView';
 import { escapeHtml } from '../lib/html';
@@ -103,7 +104,7 @@ export interface MapHandle {
   /** Remove the finished measurement: its line, popup and readout. */
   clearMeasurement: () => void;
   /** Ask "what is here?" at a point: look up its address and open the card. */
-  lookupAt: (coords: MapLngLat) => void;
+  lookupAt: (coords: MapLngLat, options?: { exact?: boolean }) => void;
   /** Put keyboard focus on the map. */
   focus: () => void;
 }
@@ -174,12 +175,13 @@ export interface MapProps {
    */
   /**
    * A place to show in the card. `retry` says the answer is a failure the card
-   * can ask again ("Prøv igjen" re-runs the lookup at the same point).
+   * can ask again ("Prøv igjen" re-runs the lookup at the same point), `exact`
+   * that the point itself was asked for, so asking again must keep it.
    */
   onSelect?: (
     feature: GeoJSONFeature,
     note?: string,
-    options?: { focus?: boolean; retry?: boolean }
+    options?: { focus?: boolean; retry?: boolean; exact?: boolean }
   ) => void;
   onRightClick?: (evt: { lng: number; lat: number; x: number; y: number }) => void;
   onStreetViewSelect?: (evt: StreetViewEventDetail) => void;
@@ -363,7 +365,7 @@ const MapComponent = forwardRef<MapHandle, MapProps>((props: MapProps, ref: Reac
   // Aborts an in-flight reverse-geocode when a newer map click arrives.
   const reverseGeocodeAbortRef = useRef<AbortController | null>(null);
   // The one "what is here?" lookup, shared by a click, Enter and the menu.
-  const lookupAtRef = useRef<((lat: number, lng: number) => Promise<void>) | null>(null);
+  const lookupAtRef = useRef<((lat: number, lng: number, exact?: boolean) => Promise<void>) | null>(null);
   // The dot that marks a point while its address is being looked up.
   const pendingLookupRef = useRef<L.CircleMarker | null>(null);
   // Panorama points currently drawn, so Enter on the map can open the nearest.
@@ -546,7 +548,10 @@ const MapComponent = forwardRef<MapHandle, MapProps>((props: MapProps, ref: Reac
     // always answers with the card: the address when the lookup succeeds,
     // otherwise the coordinates and a line saying why, so the point can still
     // be saved or routed to and the question never feels swallowed.
-    const lookupAt = async (lat: number, lng: number) => {
+    // A click asks what is near, so the answer's own place replaces it. `exact`
+    // is someone who typed a position: the pin stays on it, and the address is
+    // only told.
+    const lookupAt = async (lat: number, lng: number, exact = false) => {
       // Abort any in-flight lookup so only the latest question wins.
       reverseGeocodeAbortRef.current?.abort();
       const controller = new AbortController();
@@ -570,22 +575,27 @@ const MapComponent = forwardRef<MapHandle, MapProps>((props: MapProps, ref: Reac
       }).addTo(map);
       pendingLookupRef.current = pending;
       // The answer takes keyboard focus only if focus is still free when it
-      // lands: on the map, on nothing, or on the menu that asked. Someone who
-      // has moved on to type elsewhere keeps their place.
+      // lands: on the map, on nothing, on the menu or the search field that
+      // asked. Someone who has moved on to type elsewhere keeps their place.
       const focusIsFree = () => {
         const active = document.activeElement;
         return (
           !active ||
           active === document.body ||
           active === map.getContainer() ||
-          Boolean(active.closest('[role="menu"]'))
+          Boolean(active.closest('[role="menu"]')) ||
+          (exact && active.hasAttribute('data-focus-home'))
         );
       };
       try {
         const geoFeature = await ReverseGeocode(lat, lng, controller.signal);
         if (controller.signal.aborted) return;
-        const options = { focus: focusIsFree() };
-        if (geoFeature) {
+        const options = { focus: focusIsFree(), exact };
+        if (geoFeature && exact) {
+          const { title, locality } = getPlaceTitle(geoFeature);
+          const address = [title, locality].filter(Boolean).join(', ');
+          propsRef.current.onSelect?.(pointFeature, `Nærmeste adresse: ${address}`, options);
+        } else if (geoFeature) {
           propsRef.current.onSelect?.(geoFeature, undefined, options);
         } else {
           propsRef.current.onSelect?.(pointFeature, 'Fant ingen adresse for punktet.', options);
@@ -596,7 +606,7 @@ const MapComponent = forwardRef<MapHandle, MapProps>((props: MapProps, ref: Reac
         propsRef.current.onSelect?.(
           pointFeature,
           toUserMessage(error, 'Kunne ikke hente adressen for punktet. Får ikke kontakt med adressetjenesten.'),
-          { focus: focusIsFree(), retry: true }
+          { focus: focusIsFree(), retry: true, exact }
         );
       } finally {
         if (reverseGeocodeAbortRef.current === controller) {
@@ -2140,8 +2150,8 @@ const MapComponent = forwardRef<MapHandle, MapProps>((props: MapProps, ref: Reac
       clearMeasurement() {
         clearMeasurementRef.current();
       },
-      lookupAt(coords: MapLngLat) {
-        void lookupAtRef.current?.(coords.lat, coords.lng);
+      lookupAt(coords: MapLngLat, options?: { exact?: boolean }) {
+        void lookupAtRef.current?.(coords.lat, coords.lng, options?.exact);
       },
       jumpToBoundingBox(bbox: [number, number, number, number]) {
         const map = mapRef.current;

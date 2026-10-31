@@ -1,7 +1,7 @@
 # OpenMaps
 
 OpenMaps er en kartløsning du drifter selv. Du får et kart i nettleseren med stedssøk,
-ruteplanlegging for bil, gange og sykkel, søk etter kartobjekter med vanlig tekst
+koordinatsøk, ruteplanlegging for bil, gange og sykkel, søk etter kartobjekter med vanlig tekst
 («kafeer», «ladestasjoner»), lag, oppmåling, lenker til kartutsnitt og gatebilder hvis du
 har dem. Løsningen er to containere: en nettapp (React og Leaflet) og et API (FastAPI) som
 sender søk, ruter og spørringer videre til karttjenestene du velger. Det kan være de

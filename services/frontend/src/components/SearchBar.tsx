@@ -40,15 +40,30 @@ const GlobeIcon = () => (
   </svg>
 );
 
+const CrosshairIcon = () => (
+  <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} strokeLinecap="round" aria-hidden="true">
+    <circle cx="12" cy="12" r="7" />
+    <path d="M12 2v5M12 17v5M2 12h5M17 12h5" />
+  </svg>
+);
+
 /**
- * Both search modes, always visible: the everyday "Steder" and the area search
- * "Hva finnes i kartutsnittet?". A toggle that named only the current mode hid the second
- * job from anyone who did not already know it existed.
+ * All the search modes, always visible: the everyday "Steder", the area search
+ * "Hva finnes i kartutsnittet?" and "Koordinater". A toggle that named only the
+ * current mode hid the other jobs from anyone who did not already know they
+ * existed.
  */
 const MODES: { id: SearchMode; label: string; Icon: React.FC }[] = [
   { id: 'nominatim', label: 'Steder', Icon: PinIcon },
-  { id: 'overpass', label: 'Hva finnes i kartutsnittet?', Icon: GlobeIcon }
+  { id: 'overpass', label: 'Hva finnes i kartutsnittet?', Icon: GlobeIcon },
+  { id: 'coordinates', label: 'Koordinater', Icon: CrosshairIcon }
 ];
+
+const PLACEHOLDERS: Record<SearchMode, string> = {
+  nominatim: 'Søk etter sted eller adresse…',
+  overpass: 'F.eks. apotek eller lekeplasser',
+  coordinates: 'F.eks. 59,9139 10,7522 eller 32V 597980 6643119'
+};
 
 const SearchBar: React.FC<SearchBarProps> = ({
   mapRef,
@@ -147,15 +162,11 @@ const SearchBar: React.FC<SearchBarProps> = ({
           inputRef={fieldRef}
           value={query}
           onChange={setQuery}
-          placeholder={
-            searchMode === 'nominatim'
-              ? 'Søk etter sted eller adresse…'
-              : 'F.eks. apotek eller lekeplasser'
-          }
+          placeholder={PLACEHOLDERS[searchMode]}
           mode={searchMode}
           mapRef={mapRef}
           onSelect={(feature: GeoJSONFeature) => {
-            setQuery(feature.properties?.display_name ?? '');
+            if (searchMode !== 'coordinates') setQuery(feature.properties?.display_name ?? '');
             onSelect(feature);
           }}
           onHover={onHover}

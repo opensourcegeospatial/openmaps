@@ -40,6 +40,18 @@ den filen når den lastes. En endret verdi trenger derfor bare
 `docker compose up -d frontend`, ikke et nytt bilde. Alle variablene er forklart i
 `.env.example` og under «Konfigurasjon» i README-en i rotmappen.
 
+## Koordinatsøk
+
+Fanen «Koordinater» i søkefeltet leser desimalgrader, grader og minutter, grader, minutter
+og sekunder, UTM og MGRS. Ingen trenger å si hvilket format de har: teksten avgjør det, og
+tall som kan leses på flere måter gir én rad per tolkning. Det gjelder to tall uten
+himmelretning som begge kan være breddegrad, og UTM uten sone (sone 33, 32 og 35).
+Kortere MGRS-referanser (for eksempel `32VNM 97 43`) settes midt i ruten de peker på.
+
+Knappenålen står der koordinatene sier, og kortet nevner nærmeste adresse uten å flytte
+den. Lesingen skjer i nettleseren; bare adresseoppslaget går til backend. Alt leses som
+WGS84/EUREF89, så en verdi i et eldre datum som ED50 havner omtrent 200 m feil.
+
 ## Lister i nettleseren
 
 «Nylige søk» (de siste 8 valgte treffene) og «Mine steder» (opptil 50 stjernemerkede

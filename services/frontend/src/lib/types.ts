@@ -1,1 +1,1 @@
-export type SearchMode = 'nominatim' | 'overpass';
+export type SearchMode = 'nominatim' | 'overpass' | 'coordinates';

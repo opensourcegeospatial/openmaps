@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import { useState } from 'react';
 import { render, screen, fireEvent, cleanup, act } from '@testing-library/react';
 import SearchField from './SearchField';
 import { searchOverpass } from '../lib/overpass';
@@ -260,5 +261,198 @@ describe('SearchField default-screen teaching', () => {
   it('steps aside once the shell has something else to show', () => {
     renderHint({ showMapHint: false });
     expect(screen.queryByText('Klikk i kartet for å se stedet eller adressen der.')).toBeNull();
+  });
+});
+
+describe('SearchField coordinates', () => {
+  const HINT = /Skriv eller lim inn/;
+  const NOT_READ = /Kjenner ikke igjen koordinatene/;
+
+  const Field = ({
+    initial = '',
+    ...props
+  }: { initial?: string } & Partial<ComponentProps<typeof SearchField>>) => {
+    const [value, setValue] = useState(initial);
+    return (
+      <SearchField
+        value={value}
+        onChange={setValue}
+        placeholder=""
+        mode="coordinates"
+        mapRef={mapRef}
+        onSelect={() => {}}
+        {...props}
+      />
+    );
+  };
+
+  const typeInto = (input: HTMLElement, value: string) => {
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value } });
+  };
+
+  it('teaches the formats while the field is empty', () => {
+    render(<Field />);
+    expect(screen.getByText(HINT)).toBeTruthy();
+    expect(screen.queryByRole('option')).toBeNull();
+  });
+
+  it('lists what it understood, with what it took the text to be', () => {
+    render(<Field />);
+    typeInto(screen.getByRole('combobox'), '32V 597980 6643119');
+    const option = screen.getByRole('option');
+    expect(option.textContent).toContain('59,91390° N, 10,75220° Ø');
+    expect(option.textContent).toContain('UTM sone 32V');
+    expect(screen.queryByText(HINT)).toBeNull();
+  });
+
+  it('never sends a coordinate to the place search', async () => {
+    vi.useFakeTimers();
+    try {
+      render(<Field />);
+      typeInto(screen.getByRole('combobox'), '59,9139 10,7522');
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+      expect(Geocode).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('takes the first reading on Enter and keeps what was pasted in the field', () => {
+    const onSelect = vi.fn();
+    render(<Field onSelect={onSelect} />);
+    const input = screen.getByRole('combobox') as HTMLInputElement;
+    typeInto(input, '10,7522 59,9139');
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(onSelect.mock.calls[0][0].geometry.coordinates).toEqual([59.9139, 10.7522]);
+    expect(input.value).toBe('10,7522 59,9139');
+    expect(screen.queryByRole('option')).toBeNull();
+  });
+
+  it('reaches the other reading with the arrow keys', () => {
+    const onSelect = vi.fn();
+    render(<Field onSelect={onSelect} />);
+    const input = screen.getByRole('combobox');
+    typeInto(input, '10,7522 59,9139');
+    expect(screen.getAllByRole('option')).toHaveLength(2);
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(onSelect.mock.calls[0][0].geometry.coordinates).toEqual([10.7522, 59.9139]);
+  });
+
+  it('picks a reading by click', () => {
+    const onSelect = vi.fn();
+    render(<Field onSelect={onSelect} />);
+    typeInto(screen.getByRole('combobox'), '10,7522 59,9139');
+    fireEvent.click(screen.getAllByRole('option')[1]);
+    expect(onSelect.mock.calls[0][0].geometry.coordinates).toEqual([10.7522, 59.9139]);
+  });
+
+  it('brings the readings back when the field is focused again, so another can be chosen', () => {
+    render(<Field />);
+    const input = screen.getByRole('combobox');
+    typeInto(input, '10,7522 59,9139');
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(screen.queryByRole('option')).toBeNull();
+    fireEvent.blur(input);
+    fireEvent.focus(input);
+    expect(screen.getAllByRole('option')).toHaveLength(2);
+  });
+
+  it('goes there again on Enter with the readings put away', () => {
+    const onSelect = vi.fn();
+    render(<Field onSelect={onSelect} />);
+    const input = screen.getByRole('combobox');
+    typeInto(input, '59,9139 N 10,7522 Ø');
+    fireEvent.keyDown(input, { key: 'Enter' });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(onSelect).toHaveBeenCalledTimes(2);
+  });
+
+  it('puts the readings away on Escape and brings them back with the next edit', () => {
+    render(<Field />);
+    const input = screen.getByRole('combobox');
+    typeInto(input, '59,9139 10,7522');
+    fireEvent.keyDown(input, { key: 'Escape' });
+    expect(screen.queryByRole('option')).toBeNull();
+    fireEvent.change(input, { target: { value: '59,9139 10,75' } });
+    expect(screen.getAllByRole('option').length).toBeGreaterThan(0);
+  });
+
+  it('keeps the teaching line, not an error, while the text is still being typed', () => {
+    render(<Field />);
+    typeInto(screen.getByRole('combobox'), '32V 5979');
+    expect(screen.getByText(HINT)).toBeTruthy();
+    expect(screen.queryByText(NOT_READ)).toBeNull();
+  });
+
+  it('says what is wrong on Enter, and withdraws it at the next edit', () => {
+    const onSelect = vi.fn();
+    render(<Field onSelect={onSelect} />);
+    const input = screen.getByRole('combobox');
+    typeInto(input, '59,9139 190,7522');
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(screen.getByText(/Lengdegrad må være mellom/)).toBeTruthy();
+    fireEvent.change(input, { target: { value: '59,9139 190,752' } });
+    expect(screen.queryByText(/Lengdegrad må være mellom/)).toBeNull();
+    expect(screen.getByText(HINT)).toBeTruthy();
+  });
+
+  it('says what is wrong at once when the text was pasted', () => {
+    render(<Field />);
+    const input = screen.getByRole('combobox');
+    fireEvent.focus(input);
+    fireEvent.paste(input);
+    fireEvent.change(input, { target: { value: 'rådhusplassen' } });
+    expect(screen.getByText(NOT_READ)).toBeTruthy();
+  });
+
+  it('does not count a paste made in another mode', () => {
+    const { rerender } = render(<Field mode="nominatim" />);
+    fireEvent.paste(screen.getByRole('combobox'));
+    rerender(<Field mode="coordinates" />);
+    typeInto(screen.getByRole('combobox'), '5');
+    expect(screen.queryByText(NOT_READ)).toBeNull();
+  });
+
+  it('announces the problem from a region that was already there', () => {
+    render(<Field />);
+    const input = screen.getByRole('combobox');
+    const region = screen.getByText(HINT);
+    expect(region.getAttribute('role')).toBe('status');
+    typeInto(input, 'rådhusplassen');
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(region.textContent).toMatch(NOT_READ);
+    expect(region.isConnected).toBe(true);
+  });
+
+  it('announces how the text was read', () => {
+    render(<Field />);
+    const input = screen.getByRole('combobox');
+    typeInto(input, '32V 597980 6643119');
+    expect(screen.getByText('Lest som 59,91390° N, 10,75220° Ø, UTM sone 32V').getAttribute('role')).toBe('status');
+    typeInto(input, '10,7522 59,9139');
+    expect(screen.getByText('2 mulige plasseringer').getAttribute('role')).toBe('status');
+  });
+
+  it('abandons a running area search when the mode switches to coordinates', async () => {
+    let receivedSignal: AbortSignal | undefined;
+    vi.mocked(searchOverpass).mockImplementation((_q, _b, signal) => {
+      receivedSignal = signal;
+      return new Promise(() => {});
+    });
+    const props = { value: 'cafes', onChange: () => {}, placeholder: '', mapRef, onSelect: () => {} };
+    const { rerender } = render(<SearchField {...props} mode="overpass" />);
+    fireEvent.keyDown(screen.getByRole('combobox'), { key: 'Enter' });
+    await act(async () => {});
+    expect(receivedSignal?.aborted).toBe(false);
+    rerender(<SearchField {...props} value="" mode="coordinates" />);
+    expect(receivedSignal?.aborted).toBe(true);
+    expect(screen.queryByText('Avbryt søk')).toBeNull();
   });
 });
